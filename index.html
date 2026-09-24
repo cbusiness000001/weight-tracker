@@ -32,6 +32,7 @@
 }
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 *,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Inter,"Segoe UI",Roboto,Arial,sans-serif;
   -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
@@ -167,6 +168,17 @@ textarea{width:100%;min-height:110px;border:0;background:var(--card);border-radi
 .install b{color:var(--text);font-weight:600}
 .install .x{flex:none;border:0;background:var(--fill);color:var(--text2);width:26px;height:26px;border-radius:50%;font-size:14px;line-height:1}
 @media (display-mode: standalone){.wrap{padding-top:8px}}
+.eta{display:flex;gap:14px;align-items:center}
+.etaicon{flex:none;width:40px;height:40px;border-radius:12px;display:grid;place-items:center;color:#fff;background:var(--green)}
+.etaicon svg{width:20px;height:20px}
+.eta .t{font-size:16px;font-weight:600;line-height:1.35;letter-spacing:-.005em}
+.eta .s{font-size:13px;color:var(--text2);margin-top:2px;line-height:1.35}
+.nudge .top{display:flex;gap:12px;align-items:flex-start}
+.nudge .top div{flex:1}
+.nudge p{margin:0;font-size:14px;line-height:1.4;color:var(--text2)}
+.nudge b{color:var(--text);font-weight:600}
+.nudge .x{flex:none;border:0;background:var(--fill);color:var(--text2);width:26px;height:26px;border-radius:50%;font-size:14px;line-height:1}
+.nudge .row2{margin:12px 0 0}
 .foot{text-align:center;font-size:12px;color:var(--text2);margin-top:28px}
 </style>
 </head>
@@ -186,6 +198,17 @@ textarea{width:100%;min-height:110px;border:0;background:var(--card);border-radi
     <img alt="" id="installIcon">
     <p><b>Add to your Home Screen</b><br>Tap <span aria-label="Share">Share</span> then "Add to Home Screen" to open this like an app.</p>
     <button class="x" id="installX" aria-label="Dismiss">✕</button>
+  </section>
+
+  <section class="card nudge" id="bkNudge" hidden>
+    <div class="top">
+      <div><p><b>Back up your data</b><br><span id="bkText"></span></p></div>
+      <button class="x" id="bkX" aria-label="Remind me later">✕</button>
+    </div>
+    <div class="row2" id="bkBtns">
+      <button class="btn" id="bkShare" hidden>Share backup</button>
+      <button class="btn ghost" id="bkCopy">Copy backup</button>
+    </div>
   </section>
 
   <section class="card">
@@ -232,6 +255,11 @@ textarea{width:100%;min-height:110px;border:0;background:var(--card);border-radi
     <div class="stat"><div class="k">BMI</div><div class="v" id="sBmi">--</div><div class="s" id="sBmiSub">&nbsp;</div></div>
     <div class="stat"><div class="k">To goal</div><div class="v" id="sGoal">--</div><div class="bar"><i id="goalBar"></i></div></div>
   </div>
+
+  <section class="card eta" id="eta" hidden>
+    <div class="etaicon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></svg></div>
+    <div><div class="t" id="etaText"></div><div class="s" id="etaSub"></div></div>
+  </section>
 
   <div class="sectiontitle">Calories</div>
   <section class="card">
@@ -302,6 +330,7 @@ textarea{width:100%;min-height:110px;border:0;background:var(--card);border-radi
       <button class="btn ghost" id="exportBtn">Copy data</button>
       <button class="btn ghost" id="importBtn">Restore</button>
     </div>
+    <p class="gnote" id="bkLast"></p>
     <div class="center"><button class="btn danger" id="resetBtn">Erase all data</button></div>
   </div>
 </dialog>
@@ -615,6 +644,41 @@ function renderStats(){
   } else { $('#sGoal').textContent = '--'; $('#goalBar').style.width = '0'; }
 }
 
+/* goal date: project the trend weight forward at the current weekly rate */
+const fmtW = n => String(+fmt1(n));
+function roughDate(t){
+  const d = new Date(t), day = d.getDate();
+  const part = day <= 10 ? 'early ' : day <= 20 ? 'mid-' : 'late ';
+  const yr = d.getFullYear() !== new Date().getFullYear() ? ' ' + d.getFullYear() : '';
+  return part + d.toLocaleDateString(undefined, { month:'long' }) + yr;
+}
+function goalEta(){
+  const p = state.profile, gw = p.goalWeight, tr = withTrend();
+  if (!gw || !tr.length) return null;
+  const last = tr[tr.length-1], cur = last.trend, left = gw - cur, g = fmtW(gw);
+  const start = p.startWeight || tr[0].weight;
+  if (Math.abs(left) < 0.5 || (start !== gw && Math.sign(start - gw) !== Math.sign(cur - gw)))
+    return { t:`You've reached your goal of ${g} lb.`, s:'Nice work. Set a new goal weight in your profile to keep going.' };
+  const rate = weeklyRate();
+  if (rate === null) return { t:`Goal: ${g} lb`, s:'Log a week of weigh-ins and you\'ll see when you\'re on track to get there.' };
+  if (Math.abs(rate) < 0.05) return { t:`No goal date yet`, s:`Your weight is holding steady, so ${g} lb isn't getting closer.` };
+  if (Math.sign(rate) !== Math.sign(left)) return { t:`No goal date yet`, s:`You're ${rate < 0 ? 'losing' : 'gaining'} ${fmt1(Math.abs(rate))} lb a week, which is moving away from ${g} lb.` };
+  const days = left / rate * 7;
+  const pace = `, ${rate < 0 ? 'losing' : 'gaining'} ${fmt1(Math.abs(rate))} lb a week`;
+  if (days > 730) return { t:`At this pace, ${g} lb is over two years away.`, s:`${fmt1(Math.abs(left))} lb to go${pace}.` };
+  const eta = last.time + days*DAY, now = Date.now();
+  if (eta <= now + 2*DAY) return { t:`At this pace, you'll hit ${g} any day now.`, s:`${fmt1(Math.abs(left))} lb to go${pace}.` };
+  const away = (eta - now)/DAY;
+  const when = 'around ' + (away < 21 ? new Date(eta).toLocaleDateString(undefined, { month:'short', day:'numeric' }) : roughDate(eta));
+  const dist = away < 14 ? Math.round(away) + ' days' : Math.round(away/7) + ' weeks';
+  return { t:`At this pace, you'll hit ${g} ${when}.`, s:`About ${dist} away${pace}.` };
+}
+function renderEta(){
+  const e = goalEta(), box = $('#eta');
+  box.hidden = !e;
+  if (e){ $('#etaText').textContent = e.t; $('#etaSub').textContent = e.s; }
+}
+
 function renderRec(){
   const a = analyze(), p = state.profile;
   const icon = $('#recIcon'), rows = $('#recRows');
@@ -711,7 +775,46 @@ $('#weeks').addEventListener('click', e => { if (e.target.id === 'moreWeeks'){ s
   $('#installX').addEventListener('click', () => { $('#install').hidden = true; try { localStorage.setItem('weightTracker.installHint','no'); } catch(e){} });
 })();
 
-function render(){ applyTheme(); renderHero(); renderChart(); renderStats(); renderRec(); renderWeeks(); renderHistory(); }
+/* backup reminder: every 14 days, "later" snoozes for 3 */
+const BK_LAST = 'weightTracker.lastBackup', BK_SNOOZE = 'weightTracker.backupSnooze';
+const getNum = k => { try { return +localStorage.getItem(k) || 0; } catch(e){ return 0; } };
+const setNum = (k, v) => { try { localStorage.setItem(k, String(v)); } catch(e){} };
+let bkConfirming = false;
+function backupText(){ return JSON.stringify(state, null, 1); }
+function markBackedUp(){ setNum(BK_LAST, Date.now()); setNum(BK_SNOOZE, 0); }
+function daysAgo(t){ const n = Math.floor((Date.now() - t)/DAY); return n <= 0 ? 'today' : n === 1 ? 'yesterday' : n + ' days ago'; }
+function renderBackup(){
+  const last = getNum(BK_LAST);
+  $('#bkLast').textContent = (last ? 'Last backup ' + daysAgo(last) + '. ' : 'No backup yet. ')
+    + 'Paste it in Notes or email it to yourself so it survives a lost or reset phone.';
+  if (bkConfirming) return;
+  const now = Date.now();
+  const due = state.entries.length >= 5 && now >= getNum(BK_SNOOZE) && (!last || now - last >= 14*DAY);
+  $('#bkNudge').hidden = !due;
+  if (!due) return;
+  $('#bkText').textContent = (last ? 'Your last backup was ' + daysAgo(last) + '. ' : '')
+    + 'Your weigh-ins only live on this device, so if it\'s lost or reset they\'re gone. Save a copy in Notes or email it to yourself.';
+  $('#bkShare').hidden = !navigator.share;
+  $('#bkCopy').className = navigator.share ? 'btn ghost' : 'btn';
+  $('#bkBtns').hidden = false;
+}
+function backupDone(msg){
+  markBackedUp(); bkConfirming = true;
+  $('#bkText').textContent = msg; $('#bkBtns').hidden = true;
+  setTimeout(() => { bkConfirming = false; renderBackup(); }, 4000);
+}
+$('#bkCopy').addEventListener('click', async () => {
+  const txt = backupText();
+  try { await navigator.clipboard.writeText(txt); backupDone('Copied. Now paste it into a note or an email to yourself.'); }
+  catch(e){ $('#openSettings').click(); $('#backup').value = txt; $('#backup').select(); $('#bkLast').textContent = 'Copy the text above, then paste it in Notes or an email to yourself.'; }
+});
+$('#bkShare').addEventListener('click', async () => {
+  try { await navigator.share({ title:'Weight backup ' + todayStr(), text:backupText() }); backupDone('Backup saved. You\'ll get another reminder in two weeks.'); }
+  catch(e){ /* share sheet cancelled */ }
+});
+$('#bkX').addEventListener('click', () => { setNum(BK_SNOOZE, Date.now() + 3*DAY); renderBackup(); });
+
+function render(){ applyTheme(); renderBackup(); renderHero(); renderChart(); renderStats(); renderEta(); renderRec(); renderWeeks(); renderHistory(); }
 
 /* ---------- actions ---------- */
 function upsert(date, weight, calories, note){
@@ -796,9 +899,9 @@ $('#saveSettings').addEventListener('click', () => {
   save(); render(); $('#settings').close();
 });
 $('#exportBtn').addEventListener('click', async () => {
-  const txt = JSON.stringify(state, null, 1);
+  const txt = backupText();
   $('#backup').value = txt; $('#backup').select();
-  try { await navigator.clipboard.writeText(txt); $('#exportBtn').textContent = 'Copied'; }
+  try { await navigator.clipboard.writeText(txt); $('#exportBtn').textContent = 'Copied'; markBackedUp(); renderBackup(); }
   catch(e){ $('#exportBtn').textContent = 'Select and copy'; }
   setTimeout(() => $('#exportBtn').textContent = 'Copy data', 1800);
 });
